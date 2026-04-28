@@ -290,15 +290,15 @@ def generate_invoice(req: InvoiceRequest):
     template_tab = template_ss.get_worksheet_by_id(TEMPLATE_GID)
     new_ws       = template_ss.duplicate_sheet(
         template_tab.id,
-        new_sheet_name=f"Invoice {invoice_num} — {req.client_name}"
+        new_sheet_name=f"{req.client_name}_{invoice_num}"
     )
     new_ss = template_ss
 
     # Fill header fields
-    new_ws.update(f"Submitted on {today}", "B9")
-    new_ws.update("B12", req.client_name)
-    new_ws.update("F12", invoice_num)
-    new_ws.update("F15", due_date)
+    new_ws.update([[ f"Submitted on {today}" ]], "B9")
+    new_ws.update([[ req.client_name ]], "B12")
+    new_ws.update([[ invoice_num ]], "F12")
+    new_ws.update([[ due_date ]], "F15")
 
     # Group entries by day and write line items starting at row 19
     filtered.sort(key=lambda r: (str(r["date"]), str(r["clock_in"])))
@@ -324,9 +324,9 @@ def generate_invoice(req: InvoiceRequest):
             day_earnings += hours * rate
             day_lines.append(f"{time_in}-{time_out}(${int(rate)}/hr)")
 
-        new_ws.update(f"B{current_row}", "\n".join(day_lines))
-        new_ws.update(f"E{current_row}", round(day_hours, 2))
-        new_ws.update(f"G{current_row}", round(day_earnings, 2))
+        new_ws.update([[ "\n".join(day_lines) ]], f"B{current_row}")
+        new_ws.update([[ round(day_hours, 2) ]], f"E{current_row}")
+        new_ws.update([[ round(day_earnings, 2) ]], f"G{current_row}")
         current_row += 1
 
     total_earnings = round(sum(
