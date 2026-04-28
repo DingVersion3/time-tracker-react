@@ -13,7 +13,10 @@ app = FastAPI(title="Time Tracker API")
 # ── CORS ───────────────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Replace with your Vercel URL in production
+    allow_origins=[
+        "https://time-tracker-react-one.vercel.app",
+        "http://localhost:5173",
+    ],  
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -104,7 +107,8 @@ def format_time_12h(t):
     """Convert HH:MM:SS to 8:30am format."""
     try:
         dt = datetime.strptime(str(t), "%H:%M:%S")
-        return dt.strftime("%-I:%M%p").lower()
+        hour = dt.hour % 12 or 12
+        return f"{hour}:{dt.strftime('%M')}{'pm' if dt.hour >= 12 else 'am'}"
     except Exception:
         return str(t)
 
