@@ -183,7 +183,7 @@ def clock_out(entry_id: int):
     now     = datetime.now()
 
     for i, row in enumerate(records):
-        if int(row.get("id", -1)) == entry_id:
+        if str(row.get("id", "")).isdigit() and int(row["id"]) == entry_id:
             clock_in_dt = datetime.strptime(
                 f"{row['date']} {row['clock_in']}", "%Y-%m-%d %H:%M:%S"
             )
@@ -202,7 +202,7 @@ def delete_entry(entry_id: int):
     records = ws.get_all_records()
 
     for i, row in enumerate(records):
-        if int(row.get("id", -1)) == entry_id:
+        if str(row.get("id", "")).isdigit() and int(row["id"]) == entry_id:
             ws.delete_rows(i + 2)
             return {"deleted": entry_id}
 
