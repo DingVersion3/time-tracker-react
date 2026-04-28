@@ -1,41 +1,63 @@
-import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
+import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom'
+import { useEffect, useState } from 'react'
 import ClockPage    from './pages/ClockPage'
 import LogPage      from './pages/LogPage'
 import InvoicePage  from './pages/InvoicePage'
 import SettingsPage from './pages/SettingsPage'
+import LoginPage    from './pages/LoginPage'
+import SignupPage   from './pages/SignupPage'
+import { getToken, clearToken } from './api'
 
 const NAV = [
-  { path: '/',         label: 'Clock',   icon: ClockIcon },
-  { path: '/log',      label: 'Log',     icon: LogIcon },
-  { path: '/invoice',  label: 'Invoice', icon: InvoiceIcon },
-  { path: '/settings', label: 'Settings',icon: SettingsIcon },
+  { path: '/',         label: 'Clock',    icon: ClockIcon },
+  { path: '/log',      label: 'Log',      icon: LogIcon },
+  { path: '/invoice',  label: 'Invoice',  icon: InvoiceIcon },
+  { path: '/settings', label: 'Settings', icon: SettingsIcon },
 ]
 
+const AUTH_ROUTES = ['/login', '/signup']
+
+function RequireAuth({ children }) {
+  const token = getToken()
+  if (!token) return <Navigate to="/login" replace />
+  return children
+}
+
 export default function App() {
-  const navigate = useNavigate()
-  const location = useLocation()
+  const navigate  = useNavigate()
+  const location  = useLocation()
+  const isAuthPage = AUTH_ROUTES.includes(location.pathname)
+
+  function handleLogout() {
+    clearToken()
+    navigate('/login')
+  }
 
   return (
     <div className="app">
       <Routes>
-        <Route path="/"         element={<ClockPage />} />
-        <Route path="/log"      element={<LogPage />} />
-        <Route path="/invoice"  element={<InvoicePage />} />
-        <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/login"  element={<LoginPage />} />
+        <Route path="/signup" element={<SignupPage />} />
+        <Route path="/"         element={<RequireAuth><ClockPage /></RequireAuth>} />
+        <Route path="/log"      element={<RequireAuth><LogPage /></RequireAuth>} />
+        <Route path="/invoice"  element={<RequireAuth><InvoicePage /></RequireAuth>} />
+        <Route path="/settings" element={<RequireAuth><SettingsPage onLogout={handleLogout} /></RequireAuth>} />
       </Routes>
 
-      <nav className="nav">
-        {NAV.map(({ path, label, icon: Icon }) => (
-          <button
-            key={path}
-            className={`nav-btn ${location.pathname === path ? 'active' : ''}`}
-            onClick={() => navigate(path)}
-          >
-            <Icon />
-            {label}
-          </button>
-        ))}
-      </nav>
+      {!isAuthPage && (
+        <nav className="nav">
+          {NAV.map(({ path, label, icon: Icon }) => (
+            <button
+              key={path}
+              className={`nav-btn ${location.pathname === path ? 'active' : ''}`}
+              onClick={() => navigate(path)}
+            >
+              <Icon />
+              {label}
+            </button>
+          ))}
+        </nav>
+      )}
     </div>
   )
 }
