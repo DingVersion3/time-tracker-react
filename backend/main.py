@@ -27,6 +27,8 @@ SCOPES = [
 TEMPLATE_SPREADSHEET_ID = "1rBbCHT8E9dCEzCorE0alX2reFc3XoK2tIRHdtFS6Q3w"
 TEMPLATE_GID             = 790763898
 
+STORAGE_SPREADSHEET_ID = "1TRrhhGVmBJZCYhEr2e8nqZEQxnBjYzZGSmnaZxegT2Y"
+
 ENTRIES_SHEET = "time_entries"
 RATES_SHEET   = "rates"
 
@@ -46,29 +48,23 @@ def get_gc():
 
 def get_storage_spreadsheet():
     """
-    Returns the storage spreadsheet.
-    On first run creates a new Google Sheet and saves its ID to a local file.
+    Opens the storage spreadsheet by its fixed ID.
+    On first run sets up the required tabs and headers if they don't exist.
     """
-    id_file = "storage_sheet_id.txt"
-
-    if os.path.exists(id_file):
-        with open(id_file) as f:
-            sheet_id = f.read().strip()
-        return get_gc().open_by_key(sheet_id)
-
     gc    = get_gc()
-    sheet = gc.create("Time Tracker — Data")
+    sheet = gc.open_by_key(STORAGE_SPREADSHEET_ID)
 
-    with open(id_file, "w") as f:
-        f.write(sheet.id)
+    existing_tabs = [ws.title for ws in sheet.worksheets()]
 
-    sheet.sheet1.update_title(ENTRIES_SHEET)
-    rates_ws = sheet.add_worksheet(title=RATES_SHEET, rows=20, cols=2)
+    if ENTRIES_SHEET not in existing_tabs:
+        ws = sheet.add_worksheet(title=ENTRIES_SHEET, rows=1000, cols=len(ENTRIES_COLS))
+        ws.append_row(ENTRIES_COLS)
 
-    sheet.worksheet(ENTRIES_SHEET).append_row(ENTRIES_COLS)
-    rates_ws.append_row(RATES_COLS)
-    for r in get_default_rates():
-        rates_ws.append_row([r["num_children"], r["hourly_rate"]])
+    if RATES_SHEET not in existing_tabs:
+        ws = sheet.add_worksheet(title=RATES_SHEET, rows=20, cols=2)
+        ws.append_row(RATES_COLS)
+        for r in get_default_rates():
+            ws.append_row([r["num_children"], r["hourly_rate"]])
 
     return sheet
 
