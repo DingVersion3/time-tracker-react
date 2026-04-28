@@ -295,7 +295,7 @@ def generate_invoice(req: InvoiceRequest):
     new_ss = template_ss
 
     # Fill header fields
-    new_ws.update("B9",  f"Submitted on {today}")
+    new_ws.update(f"Submitted on {today}", "B9")
     new_ws.update("B12", req.client_name)
     new_ws.update("F12", invoice_num)
     new_ws.update("F15", due_date)
