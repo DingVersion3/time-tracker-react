@@ -288,7 +288,9 @@ def generate_invoice(req: InvoiceRequest):
     # Copy the template into a new spreadsheet
     new_ss = gc.copy(
         TEMPLATE_SPREADSHEET_ID,
-        title=f"Invoice — {req.client_name} — {invoice_num}"
+        title=f"Invoice — {req.client_name} — {invoice_num}",
+        copy_permissions=False,
+        folder_id="1wpg6fCaD8oL3IzzY45TbfKefGWBjS83m"
     )
     new_ws = new_ss.get_worksheet_by_id(TEMPLATE_GID)
 
