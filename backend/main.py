@@ -285,20 +285,14 @@ def generate_invoice(req: InvoiceRequest):
     due_date = (datetime.now() + timedelta(days=req.due_days or 14)).strftime("%m/%d/%Y")
     today    = datetime.now().strftime("%m/%d/%Y")
 
-    # Copy directly into your personal Drive folder
-    drive_service = gc.http_client
-    copy_body = {
-        "name": f"Invoice — {req.client_name} — {invoice_num}",
-        "parents": ["1wpg6fCaD8oL3IzzY45TbfKefGWBjS83m"]
-    }
-    response = drive_service.request(
-        "post",
-        f"https://www.googleapis.com/drive/v3/files/{TEMPLATE_SPREADSHEET_ID}/copy",
-        json=copy_body
+    # Add a new tab to the template spreadsheet for this invoice
+    template_ss  = gc.open_by_key(TEMPLATE_SPREADSHEET_ID)
+    template_tab = template_ss.get_worksheet_by_id(TEMPLATE_GID)
+    new_ws       = template_ss.duplicate_sheet(
+        template_tab.id,
+        new_sheet_name=f"Invoice {invoice_num} — {req.client_name}"
     )
-    new_file_id = response.json()["id"]
-    new_ss = gc.open_by_key(new_file_id)
-    new_ws = new_ss.get_worksheet_by_id(TEMPLATE_GID)
+    new_ss = template_ss
 
     # Fill header fields
     new_ws.update("B9",  f"Submitted on {today}")
@@ -335,16 +329,13 @@ def generate_invoice(req: InvoiceRequest):
         new_ws.update(f"G{current_row}", round(day_earnings, 2))
         current_row += 1
 
-    # Make the generated invoice viewable by anyone with the link
-    new_ss.share(None, perm_type="anyone", role="reader")
-
     total_earnings = round(sum(
         float(r["hours_worked"]) * float(r["hourly_rate"])
         for r in filtered if r.get("hours_worked") and r.get("hourly_rate")
     ), 2)
 
     return {
-        "url":            f"https://docs.google.com/spreadsheets/d/{new_ss.id}",
+        "url":            f"https://docs.google.com/spreadsheets/d/{new_ss.id}/edit#gid={new_ws.id}",
         "invoice_number": invoice_num,
         "total_earnings": total_earnings,
     }
