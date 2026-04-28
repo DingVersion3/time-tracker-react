@@ -2,69 +2,116 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
-import csv, os, json
-from datetime import datetime, date
+import os, json
+from datetime import datetime, timedelta
+from collections import defaultdict
+import gspread
+from google.oauth2.service_account import Credentials
 
 app = FastAPI(title="Time Tracker API")
 
-# ── CORS ── Allow React frontend to talk to this backend
+# ── CORS ───────────────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with your Vercel URL
+    allow_origins=["*"],  # Replace with your Vercel URL in production
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-ENTRIES_FILE = "time_entries.csv"
-RATES_FILE   = "rates.csv"
+# ── Google Sheets Setup ────────────────────────────────────────────────────────
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+]
+
+TEMPLATE_SPREADSHEET_ID = "1rBbCHT8E9dCEzCorE0alX2reFc3XoK2tIRHdtFS6Q3w"
+TEMPLATE_GID             = 790763898
+
+ENTRIES_SHEET = "time_entries"
+RATES_SHEET   = "rates"
 
 ENTRIES_COLS = ["id", "date", "clock_in", "clock_out", "num_children",
                 "hourly_rate", "hours_worked", "client_name", "notes"]
 RATES_COLS   = ["num_children", "hourly_rate"]
 
-# ── CSV Helpers ────────────────────────────────────────────────────────────────
 
-def init_csv(path, columns):
-    if not os.path.exists(path):
-        with open(path, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=columns)
-            writer.writeheader()
+def get_gc():
+    creds_json = os.environ.get("GOOGLE_CREDENTIALS")
+    if not creds_json:
+        raise RuntimeError("GOOGLE_CREDENTIALS environment variable not set")
+    creds_dict = json.loads(creds_json)
+    creds      = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+    return gspread.authorize(creds)
 
-def read_csv(path, columns):
-    init_csv(path, columns)
-    rows = []
-    with open(path, "r") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            rows.append(row)
-    return rows
 
-def write_csv(path, columns, rows):
-    with open(path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=columns)
-        writer.writeheader()
-        writer.writerows(rows)
+def get_storage_spreadsheet():
+    """
+    Returns the storage spreadsheet.
+    On first run creates a new Google Sheet and saves its ID to a local file.
+    """
+    id_file = "storage_sheet_id.txt"
+
+    if os.path.exists(id_file):
+        with open(id_file) as f:
+            sheet_id = f.read().strip()
+        return get_gc().open_by_key(sheet_id)
+
+    gc    = get_gc()
+    sheet = gc.create("Time Tracker — Data")
+
+    with open(id_file, "w") as f:
+        f.write(sheet.id)
+
+    sheet.sheet1.update_title(ENTRIES_SHEET)
+    rates_ws = sheet.add_worksheet(title=RATES_SHEET, rows=20, cols=2)
+
+    sheet.worksheet(ENTRIES_SHEET).append_row(ENTRIES_COLS)
+    rates_ws.append_row(RATES_COLS)
+    for r in get_default_rates():
+        rates_ws.append_row([r["num_children"], r["hourly_rate"]])
+
+    return sheet
+
+
+def get_worksheet(tab_name):
+    return get_storage_spreadsheet().worksheet(tab_name)
+
+
+def sheet_to_dicts(ws):
+    return [dict(r) for r in ws.get_all_records()]
+
 
 def next_id(rows):
     if not rows:
         return 1
-    ids = [int(r["id"]) for r in rows if r.get("id", "").isdigit()]
+    ids = [int(r["id"]) for r in rows if str(r.get("id", "")).isdigit()]
     return max(ids) + 1 if ids else 1
+
 
 def get_default_rates():
     return [
-        {"num_children": "1", "hourly_rate": "20.00"},
-        {"num_children": "2", "hourly_rate": "30.00"},
-        {"num_children": "3", "hourly_rate": "38.00"},
-        {"num_children": "4", "hourly_rate": "45.00"},
+        {"num_children": 1, "hourly_rate": 20.00},
+        {"num_children": 2, "hourly_rate": 30.00},
+        {"num_children": 3, "hourly_rate": 38.00},
+        {"num_children": 4, "hourly_rate": 45.00},
     ]
 
-def load_rates():
-    rows = read_csv(RATES_FILE, RATES_COLS)
+
+def load_rates_dict():
+    rows = sheet_to_dicts(get_worksheet(RATES_SHEET))
     if not rows:
-        rows = get_default_rates()
-        write_csv(RATES_FILE, RATES_COLS, rows)
+        return {r["num_children"]: r["hourly_rate"] for r in get_default_rates()}
     return {int(r["num_children"]): float(r["hourly_rate"]) for r in rows}
+
+
+def format_time_12h(t):
+    """Convert HH:MM:SS to 8:30am format."""
+    try:
+        dt = datetime.strptime(str(t), "%H:%M:%S")
+        return dt.strftime("%-I:%M%p").lower()
+    except Exception:
+        return str(t)
+
 
 # ── Models ─────────────────────────────────────────────────────────────────────
 
@@ -73,17 +120,17 @@ class ClockInRequest(BaseModel):
     client_name: str
     notes: Optional[str] = ""
 
-class ClockOutRequest(BaseModel):
-    entry_id: int
-    clock_out: str  # ISO datetime string
-
 class RateUpdate(BaseModel):
     num_children: int
     hourly_rate: float
 
-class EntryUpdate(BaseModel):
-    client_name: Optional[str] = None
-    notes: Optional[str] = None
+class InvoiceRequest(BaseModel):
+    client_name: str
+    start_date: str
+    end_date: str
+    invoice_number: Optional[str] = None
+    due_days: Optional[int] = 14
+
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
@@ -91,93 +138,117 @@ class EntryUpdate(BaseModel):
 def root():
     return {"status": "Time Tracker API running"}
 
-# -- Entries --
+
+# ── Entries ────────────────────────────────────────────────────────────────────
 
 @app.get("/entries")
 def get_entries():
-    rows = read_csv(ENTRIES_FILE, ENTRIES_COLS)
-    return rows
+    return sheet_to_dicts(get_worksheet(ENTRIES_SHEET))
+
 
 @app.post("/entries/clock-in")
 def clock_in(req: ClockInRequest):
-    rates = load_rates()
-    rate  = rates.get(req.num_children, 0.0)
-    rows  = read_csv(ENTRIES_FILE, ENTRIES_COLS)
-    now   = datetime.now()
-    new_entry = {
-        "id":           next_id(rows),
-        "date":         now.strftime("%Y-%m-%d"),
-        "clock_in":     now.strftime("%H:%M:%S"),
-        "clock_out":    "",
-        "num_children": req.num_children,
-        "hourly_rate":  rate,
-        "hours_worked": "",
-        "client_name":  req.client_name,
-        "notes":        req.notes or "",
+    rates    = load_rates_dict()
+    rate     = rates.get(req.num_children, 0.0)
+    ws       = get_worksheet(ENTRIES_SHEET)
+    rows     = sheet_to_dicts(ws)
+    now      = datetime.now()
+    entry_id = next_id(rows)
+
+    ws.append_row([
+        entry_id,
+        now.strftime("%Y-%m-%d"),
+        now.strftime("%H:%M:%S"),
+        "",
+        req.num_children,
+        rate,
+        "",
+        req.client_name,
+        req.notes or "",
+    ])
+
+    return {
+        "id": entry_id, "date": now.strftime("%Y-%m-%d"),
+        "clock_in": now.strftime("%H:%M:%S"), "clock_out": "",
+        "num_children": req.num_children, "hourly_rate": rate,
+        "hours_worked": "", "client_name": req.client_name,
+        "notes": req.notes or "",
     }
-    rows.append(new_entry)
-    write_csv(ENTRIES_FILE, ENTRIES_COLS, rows)
-    return new_entry
+
 
 @app.post("/entries/{entry_id}/clock-out")
 def clock_out(entry_id: int):
-    rows = read_csv(ENTRIES_FILE, ENTRIES_COLS)
-    now  = datetime.now()
-    for row in rows:
-        if int(row["id"]) == entry_id:
-            clock_in_dt   = datetime.strptime(f"{row['date']} {row['clock_in']}", "%Y-%m-%d %H:%M:%S")
-            hours         = (now - clock_in_dt).total_seconds() / 3600
-            row["clock_out"]    = now.strftime("%H:%M:%S")
-            row["hours_worked"] = round(hours, 4)
-            write_csv(ENTRIES_FILE, ENTRIES_COLS, rows)
-            return row
+    ws      = get_worksheet(ENTRIES_SHEET)
+    records = ws.get_all_records()
+    now     = datetime.now()
+
+    for i, row in enumerate(records):
+        if int(row.get("id", -1)) == entry_id:
+            clock_in_dt = datetime.strptime(
+                f"{row['date']} {row['clock_in']}", "%Y-%m-%d %H:%M:%S"
+            )
+            hours     = (now - clock_in_dt).total_seconds() / 3600
+            sheet_row = i + 2
+            ws.update_cell(sheet_row, 4, now.strftime("%H:%M:%S"))
+            ws.update_cell(sheet_row, 7, round(hours, 4))
+            return {**row, "clock_out": now.strftime("%H:%M:%S"), "hours_worked": round(hours, 4)}
+
     raise HTTPException(status_code=404, detail="Entry not found")
+
 
 @app.delete("/entries/{entry_id}")
 def delete_entry(entry_id: int):
-    rows = read_csv(ENTRIES_FILE, ENTRIES_COLS)
-    new_rows = [r for r in rows if int(r.get("id", -1)) != entry_id]
-    if len(new_rows) == len(rows):
-        raise HTTPException(status_code=404, detail="Entry not found")
-    write_csv(ENTRIES_FILE, ENTRIES_COLS, new_rows)
-    return {"deleted": entry_id}
+    ws      = get_worksheet(ENTRIES_SHEET)
+    records = ws.get_all_records()
 
-# -- Rates --
+    for i, row in enumerate(records):
+        if int(row.get("id", -1)) == entry_id:
+            ws.delete_rows(i + 2)
+            return {"deleted": entry_id}
+
+    raise HTTPException(status_code=404, detail="Entry not found")
+
+
+# ── Rates ──────────────────────────────────────────────────────────────────────
 
 @app.get("/rates")
 def get_rates():
-    rows = read_csv(RATES_FILE, RATES_COLS)
+    rows = sheet_to_dicts(get_worksheet(RATES_SHEET))
     if not rows:
-        rows = get_default_rates()
-        write_csv(RATES_FILE, RATES_COLS, rows)
+        return get_default_rates()
     return [{"num_children": int(r["num_children"]), "hourly_rate": float(r["hourly_rate"])} for r in rows]
+
 
 @app.put("/rates")
 def update_rates(rates: list[RateUpdate]):
-    rows = [{"num_children": str(r.num_children), "hourly_rate": str(r.hourly_rate)} for r in rates]
-    write_csv(RATES_FILE, RATES_COLS, rows)
-    return {"updated": len(rows)}
+    ws = get_worksheet(RATES_SHEET)
+    ws.clear()
+    ws.append_row(RATES_COLS)
+    for r in rates:
+        ws.append_row([r.num_children, r.hourly_rate])
+    return {"updated": len(rates)}
 
-# -- Invoice --
+
+# ── Invoice ────────────────────────────────────────────────────────────────────
 
 @app.get("/invoice")
 def get_invoice(client_name: str, start_date: str, end_date: str):
-    rows = read_csv(ENTRIES_FILE, ENTRIES_COLS)
-    filtered = []
-    for row in rows:
-        if row.get("client_name") != client_name:
-            continue
-        if not row.get("clock_out"):
-            continue
-        row_date = row.get("date", "")
-        if start_date <= row_date <= end_date:
-            filtered.append(row)
+    """Returns invoice data as JSON for the frontend preview."""
+    rows = sheet_to_dicts(get_worksheet(ENTRIES_SHEET))
+
+    filtered = [
+        r for r in rows
+        if r.get("client_name") == client_name
+        and r.get("clock_out")
+        and start_date <= str(r.get("date", "")) <= end_date
+    ]
 
     total_hours    = sum(float(r["hours_worked"]) for r in filtered if r.get("hours_worked"))
     total_earnings = sum(
         float(r["hours_worked"]) * float(r["hourly_rate"])
         for r in filtered if r.get("hours_worked") and r.get("hourly_rate")
     )
+
     return {
         "client_name":    client_name,
         "start_date":     start_date,
@@ -185,4 +256,87 @@ def get_invoice(client_name: str, start_date: str, end_date: str):
         "entries":        filtered,
         "total_hours":    round(total_hours, 2),
         "total_earnings": round(total_earnings, 2),
+    }
+
+
+@app.post("/invoice/generate")
+def generate_invoice(req: InvoiceRequest):
+    """
+    Copies the invoice template into a new Google Sheet,
+    fills in all session data grouped by day,
+    and returns a shareable link to the completed invoice.
+    """
+    gc   = get_gc()
+    rows = sheet_to_dicts(get_worksheet(ENTRIES_SHEET))
+
+    filtered = [
+        r for r in rows
+        if r.get("client_name") == req.client_name
+        and r.get("clock_out")
+        and req.start_date <= str(r.get("date", "")) <= req.end_date
+    ]
+
+    if not filtered:
+        raise HTTPException(status_code=404, detail="No entries found for this client and date range")
+
+    invoice_num = req.invoice_number or str(
+        max([int(r.get("id", 0)) for r in rows if str(r.get("id","")).isdigit()], default=1)
+    )
+    due_date = (datetime.now() + timedelta(days=req.due_days or 14)).strftime("%m/%d/%Y")
+    today    = datetime.now().strftime("%m/%d/%Y")
+
+    # Copy the template into a new spreadsheet
+    new_ss = gc.copy(
+        TEMPLATE_SPREADSHEET_ID,
+        title=f"Invoice — {req.client_name} — {invoice_num}"
+    )
+    new_ws = new_ss.get_worksheet_by_id(TEMPLATE_GID)
+
+    # Fill header fields
+    new_ws.update("B9",  f"Submitted on {today}")
+    new_ws.update("B12", req.client_name)
+    new_ws.update("F12", invoice_num)
+    new_ws.update("F15", due_date)
+
+    # Group entries by day and write line items starting at row 19
+    filtered.sort(key=lambda r: (str(r["date"]), str(r["clock_in"])))
+
+    by_day = defaultdict(list)
+    for entry in filtered:
+        by_day[str(entry["date"])].append(entry)
+
+    current_row = 19
+
+    for day_date, day_entries in by_day.items():
+        day_name     = datetime.strptime(day_date, "%Y-%m-%d").strftime("%A") + ":"
+        day_lines    = [day_name]
+        day_hours    = 0
+        day_earnings = 0
+
+        for entry in day_entries:
+            time_in      = format_time_12h(str(entry["clock_in"]))
+            time_out     = format_time_12h(str(entry["clock_out"]))
+            rate         = float(entry["hourly_rate"])
+            hours        = float(entry["hours_worked"])
+            day_hours    += hours
+            day_earnings += hours * rate
+            day_lines.append(f"{time_in}-{time_out}(${int(rate)}/hr)")
+
+        new_ws.update(f"B{current_row}", "\n".join(day_lines))
+        new_ws.update(f"E{current_row}", round(day_hours, 2))
+        new_ws.update(f"G{current_row}", round(day_earnings, 2))
+        current_row += 1
+
+    # Make the generated invoice viewable by anyone with the link
+    new_ss.share(None, perm_type="anyone", role="reader")
+
+    total_earnings = round(sum(
+        float(r["hours_worked"]) * float(r["hourly_rate"])
+        for r in filtered if r.get("hours_worked") and r.get("hourly_rate")
+    ), 2)
+
+    return {
+        "url":            f"https://docs.google.com/spreadsheets/d/{new_ss.id}",
+        "invoice_number": invoice_num,
+        "total_earnings": total_earnings,
     }
