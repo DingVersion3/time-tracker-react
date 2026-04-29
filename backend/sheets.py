@@ -63,12 +63,24 @@ def generate_invoice_sheet(user: User, entries, invoice_num: str, due_days: int,
     template_id  = user.invoice_template_id  or DEFAULT_TEMPLATE_ID
     template_gid = user.invoice_template_gid or DEFAULT_TEMPLATE_GID
 
-    # Copy the template into the user's own Drive using their credentials
+    # Use service account to copy the template, then share with user
     import requests as req
-    token = creds.token
+    import json as json_lib
+    import os
+
+    sa_creds_json = os.environ.get("GOOGLE_CREDENTIALS")
+    sa_creds_dict = json_lib.loads(sa_creds_json)
+    from google.oauth2.service_account import Credentials as SACredentials
+    sa_creds = SACredentials.from_service_account_info(sa_creds_dict, scopes=[
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
+    ])
+    sa_creds.refresh(Request())
+    sa_token = sa_creds.token
+
     copy_res = req.post(
         f"https://www.googleapis.com/drive/v3/files/{template_id}/copy",
-        headers={"Authorization": f"Bearer {token}"},
+        headers={"Authorization": f"Bearer {sa_token}"},
         json={"name": f"Invoice {invoice_num} — {client_name}"}
     )
 
@@ -76,8 +88,25 @@ def generate_invoice_sheet(user: User, entries, invoice_num: str, due_days: int,
         raise Exception(f"Failed to copy template: {copy_res.text}")
 
     new_file_id = copy_res.json()["id"]
-    new_ss      = gc.open_by_key(new_file_id)
-    new_ws      = new_ss.get_worksheet_by_id(template_gid)
+
+    # Get user's Google email to share the file with them
+    user_info_res = req.get(
+        "https://www.googleapis.com/oauth2/v2/userinfo",
+        headers={"Authorization": f"Bearer {creds.token}"}
+    )
+    user_email = user_info_res.json().get("email", "")
+
+    # Share the copied file with the user as owner
+    if user_email:
+        req.post(
+            f"https://www.googleapis.com/drive/v3/files/{new_file_id}/permissions",
+            headers={"Authorization": f"Bearer {sa_token}"},
+            json={"role": "writer", "type": "user", "emailAddress": user_email}
+        )
+
+    sa_gc   = gspread.authorize(sa_creds)
+    new_ss  = sa_gc.open_by_key(new_file_id)
+    new_ws  = new_ss.get_worksheet_by_id(template_gid)
 
     # Fill header fields
     new_ws.update([[ user.business_name or "" ]], "B3")
