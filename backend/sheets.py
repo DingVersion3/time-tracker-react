@@ -7,7 +7,7 @@ from collections import defaultdict
 from sqlalchemy.orm import Session
 from database import User
 import os, json
-import defaultdict
+from collections import defaultdict
 
 
 SCOPES = [
