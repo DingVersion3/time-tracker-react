@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getEntries, getInvoice, getMe } from '../api'
+import { getEntries, getInvoice, getMe, generateInvoice } from '../api'
 
-const BASE_URL = import.meta.env.VITE_API_URL || "/api"
 
 export default function InvoicePage() {
   const [clients,         setClients]         = useState([])
@@ -51,21 +50,7 @@ export default function InvoicePage() {
     setError('')
     setGenerating(true)
     try {
-      const res = await fetch(`${BASE_URL}/invoice/generate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          client_name: client,
-          start_date:  startDate,
-          end_date:    endDate,
-          due_days:    14,
-        }),
-      })
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: 'Failed to generate' }))
-        throw new Error(err.detail)
-      }
-      const data = await res.json()
+      const data = await generateInvoice(client, startDate, endDate, 14)
       setSheetUrl(data.url)
     } catch (e) {
       setError(e.message)
