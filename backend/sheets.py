@@ -7,6 +7,8 @@ from collections import defaultdict
 from sqlalchemy.orm import Session
 from database import User
 import os, json
+import defaultdict
+
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -52,31 +54,33 @@ def format_time_12h(t):
 
 
 def generate_invoice_sheet(user: User, entries, invoice_num: str, due_days: int, db: Session) -> str:
-    """
-    Duplicates the invoice template into the user's own Google Drive
-    using their own OAuth credentials, fills in the data, and returns the URL.
-    """
-    creds       = get_user_credentials(user, db)
-    gc          = gspread.authorize(creds)
-    today       = datetime.now().strftime("%m/%d/%Y")
-    due_date    = (datetime.now() + timedelta(days=due_days)).strftime("%m/%d/%Y")
+    creds    = get_user_credentials(user, db)
+    gc       = gspread.authorize(creds)
+    today    = datetime.now().strftime("%m/%d/%Y")
+    due_date = (datetime.now() + timedelta(days=due_days)).strftime("%m/%d/%Y")
+    client_name = entries[0].client_name if entries else ""
 
-    template_id  = user.invoice_template_id  or DEFAULT_TEMPLATE_ID
-    template_gid = user.invoice_template_gid or DEFAULT_TEMPLATE_GID
+    # Create a brand new spreadsheet in the user's Drive
+    ss = gc.create(f"Invoice {invoice_num} — {client_name}")
+    ws = ss.sheet1
+    ws.update_title("Invoice")
 
-    template_ss  = gc.open_by_key(template_id)
-    template_tab = template_ss.get_worksheet_by_id(template_gid)
+    # Header info
+    ws.update([[ user.business_name or "" ]], "A1")
+    ws.update([[ user.business_address or "" ]], "A2")
+    ws.update([[ user.business_phone or "" ]], "A3")
+    ws.update([[ f"Submitted on {today}" ]], "A5")
+    ws.update([[ "Invoice for" ]], "A7")
+    ws.update([[ client_name ]], "A8")
+    ws.update([[ "Payable to" ]], "C7")
+    ws.update([[ user.payable_to or "" ]], "C8")
+    ws.update([[ "Invoice #" ]], "E7")
+    ws.update([[ invoice_num ]], "E8")
+    ws.update([[ "Due date" ]], "E10")
+    ws.update([[ due_date ]], "E11")
 
-    new_ws = template_ss.duplicate_sheet(
-        template_tab.id,
-        new_sheet_name=f"Invoice {invoice_num} — {entries[0].client_name if entries else ''}"
-    )
-
-    # Fill header fields
-    new_ws.update([[ f"Submitted on {today}" ]], "B9")
-    new_ws.update([[ entries[0].client_name if entries else "" ]], "B12")
-    new_ws.update([[ invoice_num ]], "F12")
-    new_ws.update([[ due_date ]], "F15")
+    # Column headers
+    ws.update([[ "Description", "", "Hours", "Total" ]], "A13")
 
     # Group entries by day
     entries_sorted = sorted(entries, key=lambda e: (e.date, e.clock_in))
@@ -84,25 +88,34 @@ def generate_invoice_sheet(user: User, entries, invoice_num: str, due_days: int,
     for entry in entries_sorted:
         by_day[entry.date].append(entry)
 
-    current_row = 19
+    current_row = 14
+    total_hours    = 0
+    total_earnings = 0
+
     for day_date, day_entries in by_day.items():
-        day_name     = datetime.strptime(str(day_date), "%Y-%m-%d").strftime("%A") + ":"
-        day_lines    = [day_name]
-        day_hours    = 0
-        day_earnings = 0
+        day_name  = datetime.strptime(str(day_date), "%Y-%m-%d").strftime("%A") + ":"
+        day_lines = [day_name]
+        day_hours = 0
+        day_earn  = 0
 
         for entry in day_entries:
-            time_in      = format_time_12h(str(entry.clock_in))
-            time_out     = format_time_12h(str(entry.clock_out))
-            rate         = float(entry.hourly_rate)
-            hours        = float(entry.hours_worked)
-            day_hours    += hours
-            day_earnings += hours * rate
+            time_in  = format_time_12h(str(entry.clock_in))
+            time_out = format_time_12h(str(entry.clock_out))
+            rate     = float(entry.hourly_rate)
+            hours    = float(entry.hours_worked)
+            day_hours += hours
+            day_earn  += hours * rate
             day_lines.append(f"{time_in}-{time_out}(${int(rate)}/hr)")
 
-        new_ws.update([[ "\n".join(day_lines) ]], f"B{current_row}")
-        new_ws.update([[ round(day_hours, 2) ]], f"E{current_row}")
-        new_ws.update([[ round(day_earnings, 2) ]], f"G{current_row}")
+        ws.update([[ "\n".join(day_lines) ]], f"A{current_row}")
+        ws.update([[ round(day_hours, 2) ]], f"C{current_row}")
+        ws.update([[ round(day_earn,  2) ]], f"D{current_row}")
+        total_hours    += day_hours
+        total_earnings += day_earn
         current_row += 1
 
-    return f"https://docs.google.com/spreadsheets/d/{template_ss.id}/edit#gid={new_ws.id}"
+    # Totals
+    ws.update([[ "Subtotal", "", "", round(total_earnings, 2) ]], f"A{current_row + 1}")
+    ws.update([[ "TOTAL DUE", "", "", round(total_earnings, 2) ]], f"A{current_row + 2}")
+
+    return f"https://docs.google.com/spreadsheets/d/{ss.id}"
