@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, Float, Date, Time, ForeignKey, Boolean, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, Float, ForeignKey, DateTime, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
@@ -6,39 +6,42 @@ import os
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
-# Render's postgres URLs start with postgres:// but SQLAlchemy needs postgresql://
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-engine         = create_engine(DATABASE_URL)
-SessionLocal   = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base           = declarative_base()
+engine       = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base         = declarative_base()
 
-
-# ── Models ─────────────────────────────────────────────────────────────────────
 
 class User(Base):
     __tablename__ = "users"
 
-    id                  = Column(Integer, primary_key=True, index=True)
-    email               = Column(String, unique=True, index=True, nullable=False)
-    hashed_password     = Column(String, nullable=False)
-    business_name       = Column(String, default="")
-    business_address    = Column(String, default="")
-    business_phone      = Column(String, default="")
-    payable_to          = Column(String, default="")
+    id                   = Column(Integer, primary_key=True, index=True)
+    email                = Column(String, unique=True, index=True, nullable=False)
+    hashed_password      = Column(String, nullable=True)   # nullable — Google users may not have one
+
+    business_name        = Column(String, default="")
+    business_address     = Column(String, default="")
+    business_phone       = Column(String, default="")
+    payable_to           = Column(String, default="")
 
     # Stripe
-    stripe_customer_id  = Column(String, default="")
-    subscription_status = Column(String, default="trialing")  # trialing, active, canceled
-    trial_ends_at       = Column(DateTime, nullable=True)
+    stripe_customer_id   = Column(String, default="")
+    subscription_status  = Column(String, default="trialing")
+    trial_ends_at        = Column(DateTime, nullable=True)
 
-    # Google Sheets
-    invoice_template_id = Column(String, default="")
-    invoice_template_gid= Column(Integer, default=0)
-    invoice_folder_id   = Column(String, default="")
+    # Google OAuth — stored per user so invoices use their own Drive
+    google_access_token  = Column(Text, default="")
+    google_refresh_token = Column(Text, default="")
+    google_token_expiry  = Column(DateTime, nullable=True)
+    google_connected     = Column(String, default="false")  # "true" / "false"
 
-    created_at          = Column(DateTime, default=datetime.utcnow)
+    # Invoice template (optional override — defaults to built-in template)
+    invoice_template_id  = Column(String, default="")
+    invoice_template_gid = Column(Integer, default=0)
+
+    created_at           = Column(DateTime, default=datetime.utcnow)
 
     entries = relationship("TimeEntry", back_populates="user", cascade="all, delete")
     rates   = relationship("Rate",      back_populates="user", cascade="all, delete")

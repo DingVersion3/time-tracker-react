@@ -7,8 +7,8 @@ from sqlalchemy.orm import Session
 from database import get_db, User
 import os
 
-SECRET_KEY  = os.environ.get("SECRET_KEY", "change-this-in-production-please")
-ALGORITHM   = "HS256"
+SECRET_KEY        = os.environ.get("SECRET_KEY", "change-this-in-production-please")
+ALGORITHM         = "HS256"
 TOKEN_EXPIRE_DAYS = 30
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
@@ -16,6 +16,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
 
 def verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.checkpw(plain.encode(), hashed.encode())
@@ -46,17 +47,10 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
 
 
 def require_active_subscription(current_user: User = Depends(get_current_user)) -> User:
-    """Blocks access if trial has expired and user hasn't subscribed."""
     if current_user.subscription_status == "active":
         return current_user
     if current_user.subscription_status == "trialing":
         if current_user.trial_ends_at and datetime.utcnow() < current_user.trial_ends_at:
             return current_user
-        raise HTTPException(
-            status_code=402,
-            detail="Your free trial has expired. Please subscribe to continue."
-        )
-    raise HTTPException(
-        status_code=402,
-        detail="Subscription required."
-    )
+        raise HTTPException(status_code=402, detail="Your free trial has expired. Please subscribe to continue.")
+    raise HTTPException(status_code=402, detail="Subscription required.")

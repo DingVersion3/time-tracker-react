@@ -16,7 +16,6 @@ export default function SignupPage() {
     if (!email || !password || !confirm) { setError('Please fill in all fields'); return }
     if (password !== confirm)            { setError('Passwords do not match'); return }
     if (password.length < 8)             { setError('Password must be at least 8 characters'); return }
-    if (password.length > 72) { setError('Password must be 72 characters or less'); return }
 
     setError('')
     setLoading(true)

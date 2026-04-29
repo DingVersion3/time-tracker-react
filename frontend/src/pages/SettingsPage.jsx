@@ -1,23 +1,22 @@
 import { useState, useEffect } from 'react'
 import { getRates, updateRates, getMe, updateProfile } from '../api'
 
-export default function SettingsPage({ onLogout }) {
-  const [rates,        setRates]        = useState([])
-  const [user,         setUser]         = useState(null)
-  const [loading,      setLoading]      = useState(true)
-  const [saving,       setSaving]       = useState(false)
-  const [savingProfile,setSavingProfile]= useState(false)
-  const [saved,        setSaved]        = useState(false)
-  const [savedProfile, setSavedProfile] = useState(false)
-  const [error,        setError]        = useState('')
+const BASE_URL = import.meta.env.VITE_API_URL || "/api"
 
-  // Profile fields
+export default function SettingsPage({ onLogout }) {
+  const [rates,         setRates]         = useState([])
+  const [user,          setUser]          = useState(null)
+  const [loading,       setLoading]       = useState(true)
+  const [saving,        setSaving]        = useState(false)
+  const [savingProfile, setSavingProfile] = useState(false)
+  const [saved,         setSaved]         = useState(false)
+  const [savedProfile,  setSavedProfile]  = useState(false)
+  const [error,         setError]         = useState('')
+
   const [businessName,    setBusinessName]    = useState('')
   const [businessAddress, setBusinessAddress] = useState('')
   const [businessPhone,   setBusinessPhone]   = useState('')
   const [payableTo,       setPayableTo]       = useState('')
-  const [templateId,      setTemplateId]      = useState('')
-  const [templateGid,     setTemplateGid]     = useState('')
 
   useEffect(() => {
     Promise.all([getRates(), getMe()]).then(([r, u]) => {
@@ -27,8 +26,6 @@ export default function SettingsPage({ onLogout }) {
       setBusinessAddress(u.business_address || '')
       setBusinessPhone(u.business_phone || '')
       setPayableTo(u.payable_to || '')
-      setTemplateId(u.invoice_template_id || '')
-      setTemplateGid(u.invoice_template_gid || '')
       setLoading(false)
     }).catch(() => setLoading(false))
   }, [])
@@ -65,14 +62,7 @@ export default function SettingsPage({ onLogout }) {
     setError('')
     setSavingProfile(true)
     try {
-      await updateProfile({
-        business_name:        businessName,
-        business_address:     businessAddress,
-        business_phone:       businessPhone,
-        payable_to:           payableTo,
-        invoice_template_id:  templateId,
-        invoice_template_gid: templateGid ? Number(templateGid) : 0,
-      })
+      await updateProfile({ business_name: businessName, business_address: businessAddress, business_phone: businessPhone, payable_to: payableTo })
       setSavedProfile(true)
       setTimeout(() => setSavedProfile(false), 2500)
     } catch (e) {
@@ -82,10 +72,29 @@ export default function SettingsPage({ onLogout }) {
     }
   }
 
-  // Trial days remaining
+  async function handleConnectGoogle() {
+    const token = localStorage.getItem('token')
+    const res   = await fetch(`${BASE_URL}/auth/google`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    })
+    const data = await res.json()
+    window.location.href = data.url
+  }
+
+  async function handleDisconnectGoogle() {
+    const token = localStorage.getItem('token')
+    await fetch(`${BASE_URL}/auth/google/disconnect`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}` }
+    })
+    setUser(prev => ({ ...prev, google_connected: 'false' }))
+  }
+
   const trialDays = user?.trial_ends_at
     ? Math.max(0, Math.ceil((new Date(user.trial_ends_at) - new Date()) / (1000 * 60 * 60 * 24)))
     : null
+
+  const googleConnected = user?.google_connected === 'true'
 
   return (
     <div>
@@ -101,8 +110,28 @@ export default function SettingsPage({ onLogout }) {
         </div>
       )}
 
+      {/* Google Account */}
+      <div className="section-label" style={{ marginTop: 8 }}>Google Account</div>
+      <div className="card">
+        <p style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 14, lineHeight: 1.6 }}>
+          Connect your Google account to generate invoices directly in your Google Drive.
+        </p>
+        {googleConnected ? (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ color: 'var(--green)', fontSize: 13 }}>✓ Google account connected</span>
+            <button className="btn btn-ghost btn-sm" style={{ color: 'var(--red)' }} onClick={handleDisconnectGoogle}>
+              Disconnect
+            </button>
+          </div>
+        ) : (
+          <button className="btn btn-primary" onClick={handleConnectGoogle}>
+            🔗 Connect Google Account
+          </button>
+        )}
+      </div>
+
       {/* Business Profile */}
-      <div className="section-label" style={{ marginTop: 8 }}>Business Profile</div>
+      <div className="section-label">Business Profile</div>
       <div className="card">
         <div className="field">
           <label>Business Name</label>
@@ -119,19 +148,6 @@ export default function SettingsPage({ onLogout }) {
         <div className="field" style={{ marginBottom: 0 }}>
           <label>Payable To</label>
           <input className="input" value={payableTo} onChange={e => setPayableTo(e.target.value)} placeholder="e.g. Janelle Wilkinson" />
-        </div>
-      </div>
-
-      {/* Google Sheets */}
-      <div className="section-label">Invoice Template</div>
-      <div className="card">
-        <div className="field">
-          <label>Google Sheet Template ID</label>
-          <input className="input" value={templateId} onChange={e => setTemplateId(e.target.value)} placeholder="Paste spreadsheet ID from URL" />
-        </div>
-        <div className="field" style={{ marginBottom: 0 }}>
-          <label>Template Tab ID (gid)</label>
-          <input className="input" value={templateGid} onChange={e => setTemplateGid(e.target.value)} placeholder="e.g. 790763898" />
         </div>
       </div>
 
@@ -174,9 +190,7 @@ export default function SettingsPage({ onLogout }) {
 
       {/* Logout */}
       <div style={{ padding: '20px 16px 0' }}>
-        <button className="btn btn-ghost" onClick={onLogout}>
-          Sign Out
-        </button>
+        <button className="btn btn-ghost" onClick={onLogout}>Sign Out</button>
       </div>
     </div>
   )

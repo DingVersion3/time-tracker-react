@@ -1,20 +1,45 @@
+from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
+from googleapiclient.discovery import build
 import gspread
-from google.oauth2.service_account import Credentials
-from datetime import datetime
+from datetime import datetime, timedelta
+from collections import defaultdict
+from sqlalchemy.orm import Session
+from database import User
 import os, json
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/drive.file",
 ]
 
-def get_gc():
-    creds_json = os.environ.get("GOOGLE_CREDENTIALS")
-    if not creds_json:
-        raise RuntimeError("GOOGLE_CREDENTIALS environment variable not set")
-    creds_dict = json.loads(creds_json)
-    creds      = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
-    return gspread.authorize(creds)
+# Built-in template — users who haven't set a custom one use this
+DEFAULT_TEMPLATE_ID  = "1NyEArEv_kdhgH9FmRDU6mVrS6z-4yQ7-mKL4xMgNa80"
+DEFAULT_TEMPLATE_GID = 790763898
+
+
+def get_user_credentials(user: User, db: Session) -> Credentials:
+    """Build Google OAuth credentials from stored user tokens."""
+    if not user.google_refresh_token:
+        raise ValueError("Google account not connected")
+
+    creds = Credentials(
+        token         = user.google_access_token or None,
+        refresh_token = user.google_refresh_token,
+        token_uri     = "https://oauth2.googleapis.com/token",
+        client_id     = os.environ.get("GOOGLE_CLIENT_ID"),
+        client_secret = os.environ.get("GOOGLE_CLIENT_SECRET"),
+        scopes        = SCOPES,
+    )
+
+    # Refresh if expired
+    if not creds.valid:
+        creds.refresh(Request())
+        user.google_access_token = creds.token
+        user.google_token_expiry = creds.expiry
+        db.commit()
+
+    return creds
 
 
 def format_time_12h(t):
@@ -26,23 +51,25 @@ def format_time_12h(t):
         return str(t)
 
 
-def generate_invoice_sheet(user, entries, invoice_num, due_days=14):
+def generate_invoice_sheet(user: User, entries, invoice_num: str, due_days: int, db: Session) -> str:
     """
-    Duplicates the user's invoice template tab and fills in the data.
-    Returns the URL to the new tab.
+    Duplicates the invoice template into the user's own Google Drive
+    using their own OAuth credentials, fills in the data, and returns the URL.
     """
-    from collections import defaultdict
-    from datetime import timedelta
+    creds       = get_user_credentials(user, db)
+    gc          = gspread.authorize(creds)
+    today       = datetime.now().strftime("%m/%d/%Y")
+    due_date    = (datetime.now() + timedelta(days=due_days)).strftime("%m/%d/%Y")
 
-    gc           = get_gc()
-    today        = datetime.now().strftime("%m/%d/%Y")
-    due_date     = (datetime.now() + timedelta(days=due_days)).strftime("%m/%d/%Y")
-    template_ss  = gc.open_by_key(user.invoice_template_id)
-    template_tab = template_ss.get_worksheet_by_id(user.invoice_template_gid)
+    template_id  = user.invoice_template_id  or DEFAULT_TEMPLATE_ID
+    template_gid = user.invoice_template_gid or DEFAULT_TEMPLATE_GID
+
+    template_ss  = gc.open_by_key(template_id)
+    template_tab = template_ss.get_worksheet_by_id(template_gid)
 
     new_ws = template_ss.duplicate_sheet(
         template_tab.id,
-        new_sheet_name=f"Invoice {invoice_num}"
+        new_sheet_name=f"Invoice {invoice_num} — {entries[0].client_name if entries else ''}"
     )
 
     # Fill header fields
@@ -51,7 +78,7 @@ def generate_invoice_sheet(user, entries, invoice_num, due_days=14):
     new_ws.update([[ invoice_num ]], "F12")
     new_ws.update([[ due_date ]], "F15")
 
-    # Group by day
+    # Group entries by day
     entries_sorted = sorted(entries, key=lambda e: (e.date, e.clock_in))
     by_day = defaultdict(list)
     for entry in entries_sorted:

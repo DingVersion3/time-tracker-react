@@ -1,25 +1,30 @@
 import { useState, useEffect } from 'react'
-import { getEntries, getInvoice } from '../api'
+import { useNavigate } from 'react-router-dom'
+import { getEntries, getInvoice, getMe } from '../api'
 
 const BASE_URL = import.meta.env.VITE_API_URL || "/api"
 
 export default function InvoicePage() {
-  const [clients,    setClients]    = useState([])
-  const [client,     setClient]     = useState('')
-  const [startDate,  setStartDate]  = useState('')
-  const [endDate,    setEndDate]    = useState('')
-  const [invoice,    setInvoice]    = useState(null)
-  const [loading,    setLoading]    = useState(false)
-  const [generating, setGenerating] = useState(false)
-  const [sheetUrl,   setSheetUrl]   = useState('')
-  const [error,      setError]      = useState('')
+  const [clients,         setClients]         = useState([])
+  const [client,          setClient]          = useState('')
+  const [startDate,       setStartDate]       = useState('')
+  const [endDate,         setEndDate]         = useState('')
+  const [invoice,         setInvoice]         = useState(null)
+  const [loading,         setLoading]         = useState(false)
+  const [generating,      setGenerating]      = useState(false)
+  const [sheetUrl,        setSheetUrl]        = useState('')
+  const [error,           setError]           = useState('')
+  const [googleConnected, setGoogleConnected] = useState(false)
+  const navigate = useNavigate()
 
   useEffect(() => {
+    getMe().then(u => setGoogleConnected(u.google_connected === 'true')).catch(() => {})
     getEntries().then(data => {
       const completed = data.filter(e => e.clock_out)
       const unique    = [...new Set(completed.map(e => e.client_name).filter(Boolean))]
       setClients(unique)
       if (unique.length) setClient(unique[0])
+
       const now   = new Date()
       const first = new Date(now.getFullYear(), now.getMonth(), 1)
       setStartDate(first.toISOString().split('T')[0])
@@ -49,7 +54,12 @@ export default function InvoicePage() {
       const res = await fetch(`${BASE_URL}/invoice/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ client_name: client, start_date: startDate, end_date: endDate, due_days: 14 }),
+        body: JSON.stringify({
+          client_name: client,
+          start_date:  startDate,
+          end_date:    endDate,
+          due_days:    14,
+        }),
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: 'Failed to generate' }))
@@ -68,8 +78,8 @@ export default function InvoicePage() {
     if (!invoice) return
     const headers = ['Date','Clock In','Clock Out','Children','Rate','Hours','Amount','Notes']
     const rows = invoice.entries.map(e => [
-      e.date, e.clock_in, e.clock_out, e.num_children, e.hourly_rate,
-      Number(e.hours_worked).toFixed(2),
+      e.date, e.clock_in, e.clock_out, e.num_children,
+      e.hourly_rate, Number(e.hours_worked).toFixed(2),
       (Number(e.hours_worked) * Number(e.hourly_rate)).toFixed(2),
       e.notes || ''
     ])
@@ -77,7 +87,7 @@ export default function InvoicePage() {
     const blob = new Blob([csv], { type: 'text/csv' })
     const url  = URL.createObjectURL(blob)
     const a    = document.createElement('a')
-    a.href = url
+    a.href     = url
     a.download = `invoice_${client.replace(/\s+/g,'_')}_${startDate}.csv`
     a.click()
     URL.revokeObjectURL(url)
@@ -113,6 +123,7 @@ export default function InvoicePage() {
                 {clients.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
+
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
               <div className="field" style={{ marginBottom: 0 }}>
                 <label>From</label>
@@ -123,6 +134,7 @@ export default function InvoicePage() {
                 <input type="date" className="input" value={endDate} onChange={e => { setEndDate(e.target.value); setInvoice(null); setSheetUrl('') }} />
               </div>
             </div>
+
             {error && <div className="error-msg" style={{ marginTop: 10 }}>{error}</div>}
           </>
         )}
@@ -138,6 +150,7 @@ export default function InvoicePage() {
 
       {invoice && invoice.entries.length > 0 && (
         <>
+          {/* Summary */}
           <div style={{ padding: '20px 24px 0' }}>
             <div style={{ fontFamily: 'var(--font-head)', fontSize: '1.1rem', fontWeight: 700, marginBottom: 4 }}>
               {invoice.client_name}
@@ -158,6 +171,7 @@ export default function InvoicePage() {
             </div>
           </div>
 
+          {/* Line items */}
           <div className="section-label">Sessions</div>
           <div className="entry-list">
             {invoice.entries.map(e => {
@@ -181,10 +195,18 @@ export default function InvoicePage() {
             })}
           </div>
 
+          {/* Actions */}
           <div style={{ padding: '8px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+
+            {/* Generate to Google Sheets */}
             {sheetUrl ? (
-              <a href={sheetUrl} target="_blank" rel="noopener noreferrer" className="btn btn-primary"
-                style={{ textDecoration: 'none', textAlign: 'center' }}>
+              <a
+                href={sheetUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn btn-primary"
+                style={{ textDecoration: 'none', textAlign: 'center' }}
+              >
                 📄 Open Invoice in Google Sheets ↗
               </a>
             ) : (
@@ -192,6 +214,7 @@ export default function InvoicePage() {
                 {generating ? 'Generating...' : '📄 Generate Google Sheets Invoice'}
               </button>
             )}
+
             <button className="btn btn-ghost" onClick={handleDownloadCSV}>
               ⬇ Download CSV
             </button>

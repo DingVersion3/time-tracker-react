@@ -4,8 +4,9 @@ import ClockPage    from './pages/ClockPage'
 import LogPage      from './pages/LogPage'
 import InvoicePage  from './pages/InvoicePage'
 import SettingsPage from './pages/SettingsPage'
-import LoginPage    from './pages/LoginPage'
-import SignupPage   from './pages/SignupPage'
+import LoginPage          from './pages/LoginPage'
+import SignupPage          from './pages/SignupPage'
+import GoogleCallbackPage from './pages/GoogleCallbackPage'
 import { getToken, clearToken } from './api'
 
 const NAV = [
@@ -15,7 +16,7 @@ const NAV = [
   { path: '/settings', label: 'Settings', icon: SettingsIcon },
 ]
 
-const AUTH_ROUTES = ['/login', '/signup']
+const AUTH_ROUTES = ['/login', '/signup', '/auth/google/callback']
 
 function RequireAuth({ children }) {
   const token = getToken()
@@ -38,6 +39,7 @@ export default function App() {
       <Routes>
         <Route path="/login"  element={<LoginPage />} />
         <Route path="/signup" element={<SignupPage />} />
+        <Route path="/auth/google/callback" element={<GoogleCallbackPage />} />
         <Route path="/"         element={<RequireAuth><ClockPage /></RequireAuth>} />
         <Route path="/log"      element={<RequireAuth><LogPage /></RequireAuth>} />
         <Route path="/invoice"  element={<RequireAuth><InvoicePage /></RequireAuth>} />
