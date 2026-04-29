@@ -54,33 +54,36 @@ def format_time_12h(t):
 
 
 def generate_invoice_sheet(user: User, entries, invoice_num: str, due_days: int, db: Session) -> str:
-    creds    = get_user_credentials(user, db)
-    gc       = gspread.authorize(creds)
-    today    = datetime.now().strftime("%m/%d/%Y")
-    due_date = (datetime.now() + timedelta(days=due_days)).strftime("%m/%d/%Y")
+    creds       = get_user_credentials(user, db)
+    gc          = gspread.authorize(creds)
+    today       = datetime.now().strftime("%m/%d/%Y")
+    due_date    = (datetime.now() + timedelta(days=due_days)).strftime("%m/%d/%Y")
     client_name = entries[0].client_name if entries else ""
 
-    # Create a brand new spreadsheet in the user's Drive
-    ss = gc.create(f"Invoice {invoice_num} — {client_name}")
-    ws = ss.sheet1
-    ws.update_title("Invoice")
+    template_id  = user.invoice_template_id  or DEFAULT_TEMPLATE_ID
+    template_gid = user.invoice_template_gid or DEFAULT_TEMPLATE_GID
 
-    # Header info
-    ws.update([[ user.business_name or "" ]], "A1")
-    ws.update([[ user.business_address or "" ]], "A2")
-    ws.update([[ user.business_phone or "" ]], "A3")
-    ws.update([[ f"Submitted on {today}" ]], "A5")
-    ws.update([[ "Invoice for" ]], "A7")
-    ws.update([[ client_name ]], "A8")
-    ws.update([[ "Payable to" ]], "C7")
-    ws.update([[ user.payable_to or "" ]], "C8")
-    ws.update([[ "Invoice #" ]], "E7")
-    ws.update([[ invoice_num ]], "E8")
-    ws.update([[ "Due date" ]], "E10")
-    ws.update([[ due_date ]], "E11")
+    # Copy the template into the user's own Drive using their credentials
+    import requests as req
+    token = creds.token
+    copy_res = req.post(
+        f"https://www.googleapis.com/drive/v3/files/{template_id}/copy",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"name": f"Invoice {invoice_num} — {client_name}"}
+    )
 
-    # Column headers
-    ws.update([[ "Description", "", "Hours", "Total" ]], "A13")
+    if not copy_res.ok:
+        raise Exception(f"Failed to copy template: {copy_res.text}")
+
+    new_file_id = copy_res.json()["id"]
+    new_ss      = gc.open_by_key(new_file_id)
+    new_ws      = new_ss.get_worksheet_by_id(template_gid)
+
+    # Fill header fields
+    new_ws.update([[ f"Submitted on {today}" ]], "B9")
+    new_ws.update([[ client_name ]], "B12")
+    new_ws.update([[ invoice_num ]], "F12")
+    new_ws.update([[ due_date ]], "F15")
 
     # Group entries by day
     entries_sorted = sorted(entries, key=lambda e: (e.date, e.clock_in))
@@ -88,10 +91,7 @@ def generate_invoice_sheet(user: User, entries, invoice_num: str, due_days: int,
     for entry in entries_sorted:
         by_day[entry.date].append(entry)
 
-    current_row = 14
-    total_hours    = 0
-    total_earnings = 0
-
+    current_row = 19
     for day_date, day_entries in by_day.items():
         day_name  = datetime.strptime(str(day_date), "%Y-%m-%d").strftime("%A") + ":"
         day_lines = [day_name]
@@ -107,15 +107,9 @@ def generate_invoice_sheet(user: User, entries, invoice_num: str, due_days: int,
             day_earn  += hours * rate
             day_lines.append(f"{time_in}-{time_out}(${int(rate)}/hr)")
 
-        ws.update([[ "\n".join(day_lines) ]], f"A{current_row}")
-        ws.update([[ round(day_hours, 2) ]], f"C{current_row}")
-        ws.update([[ round(day_earn,  2) ]], f"D{current_row}")
-        total_hours    += day_hours
-        total_earnings += day_earn
+        new_ws.update([[ "\n".join(day_lines) ]], f"B{current_row}")
+        new_ws.update([[ round(day_hours, 2) ]], f"E{current_row}")
+        new_ws.update([[ round(day_earn,  2) ]], f"G{current_row}")
         current_row += 1
 
-    # Totals
-    ws.update([[ "Subtotal", "", "", round(total_earnings, 2) ]], f"A{current_row + 1}")
-    ws.update([[ "TOTAL DUE", "", "", round(total_earnings, 2) ]], f"A{current_row + 2}")
-
-    return f"https://docs.google.com/spreadsheets/d/{ss.id}"
+    return f"https://docs.google.com/spreadsheets/d/{new_file_id}"
