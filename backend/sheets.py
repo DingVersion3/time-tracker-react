@@ -16,7 +16,7 @@ SCOPES = [
 ]
 
 # Built-in template — users who haven't set a custom one use this
-DEFAULT_TEMPLATE_ID  = "1NyEArEv_kdhgH9FmRDU6mVrS6z-4yQ7-mKL4xMgNa80"
+DEFAULT_TEMPLATE_ID  = "1WaTiiUCCJ5qVzwsy59oqYAMhCK_Ktmyy_998k2ht9mY"
 DEFAULT_TEMPLATE_GID = 790763898
 
 
@@ -80,6 +80,7 @@ def generate_invoice_sheet(user: User, entries, invoice_num: str, due_days: int,
     new_ws      = new_ss.get_worksheet_by_id(template_gid)
 
     # Fill header fields
+    new_ws.update([[ user.business_name or "" ]], "B3")
     new_ws.update([[ f"Submitted on {today}" ]], "B9")
     new_ws.update([[ client_name ]], "B12")
     new_ws.update([[ invoice_num ]], "F12")
