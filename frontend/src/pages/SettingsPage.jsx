@@ -135,19 +135,19 @@ export default function SettingsPage({ onLogout }) {
       <div className="card">
         <div className="field">
           <label>Business Name</label>
-          <input className="input" value={businessName} onChange={e => setBusinessName(e.target.value)} placeholder="e.g. Janelle's Care Services" />
+          <input className="input" value={businessName} onChange={e => setBusinessName(e.target.value)} placeholder="e.g. Your Business Name" />
         </div>
         <div className="field">
           <label>Address</label>
-          <input className="input" value={businessAddress} onChange={e => setBusinessAddress(e.target.value)} placeholder="e.g. 325 E Oak View Ave A" />
+          <input className="input" value={businessAddress} onChange={e => setBusinessAddress(e.target.value)} placeholder="e.g. 123 Main St." />
         </div>
         <div className="field">
           <label>Phone</label>
-          <input className="input" value={businessPhone} onChange={e => setBusinessPhone(e.target.value)} placeholder="e.g. (805) 258-9423" />
+          <input className="input" value={businessPhone} onChange={e => setBusinessPhone(e.target.value)} placeholder="e.g. (555) 555-5555" />
         </div>
         <div className="field" style={{ marginBottom: 0 }}>
           <label>Payable To</label>
-          <input className="input" value={payableTo} onChange={e => setPayableTo(e.target.value)} placeholder="e.g. Janelle Wilkinson" />
+          <input className="input" value={payableTo} onChange={e => setPayableTo(e.target.value)} placeholder="e.g. Bob Smith" />
         </div>
       </div>
 
